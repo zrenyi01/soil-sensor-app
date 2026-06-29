@@ -13,4 +13,4 @@ soil_sensor_app/
 ├── .github/
 │   └── workflows/
 │       └── build_apk.yml
-└── README.md
+└── README.md"# soil-sensor-app" 
