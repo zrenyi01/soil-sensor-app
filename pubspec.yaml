@@ -1,0 +1,31 @@
+name: soil_sensor_app
+description: Soil Sensor Monitor App
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # 蓝牙通信（替代 pyserial）
+  flutter_blue_plus: ^1.32.0
+  # 图表展示
+  fl_chart: ^0.65.0
+  # HTTP 请求（替代 requests）
+  http: ^1.1.0
+  # 状态管理
+  provider: ^6.0.5
+  # 本地存储
+  shared_preferences: ^2.2.2
+  # 权限管理
+  permission_handler: ^11.0.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
