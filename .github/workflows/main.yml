@@ -1,0 +1,541 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.16.0'
+          channel: 'stable'
+
+      - name: Create Flutter project
+        run: |
+          # 删除可能存在的旧项目文件
+          rm -rf android ios linux macos web windows
+          rm -rf lib test
+          rm -f pubspec.yaml analysis_options.yaml
+          
+          # 创建新的 Flutter 项目
+          flutter create --org com.example .
+          
+          # 获取依赖
+          flutter pub get
+
+      - name: Replace source code
+        run: |
+          # 替换 pubspec.yaml
+          cat > pubspec.yaml << 'EOF'
+          name: soil_sensor_app
+          description: A soil sensor monitoring application
+          publish_to: 'none'
+          version: 1.0.0+1
+
+          environment:
+            sdk: '>=3.0.0 <4.0.0'
+
+          dependencies:
+            flutter:
+              sdk: flutter
+            cupertino_icons: ^1.0.6
+            fl_chart: ^0.65.0
+            provider: ^6.0.5
+
+          dev_dependencies:
+            flutter_test:
+              sdk: flutter
+            flutter_lints: ^3.0.0
+
+          flutter:
+            uses-material-design: true
+          EOF
+
+          # 创建 lib 目录
+          mkdir -p lib/models lib/screens
+
+          # 创建 main.dart
+          cat > lib/main.dart << 'EOF'
+          import 'package:flutter/material.dart';
+          import 'package:provider/provider.dart';
+          import 'models/sensor_data.dart';
+          import 'screens/home_screen.dart';
+
+          void main() {
+            runApp(const MyApp());
+          }
+
+          class MyApp extends StatelessWidget {
+            const MyApp({super.key});
+
+            @override
+            Widget build(BuildContext context) {
+              return ChangeNotifierProvider(
+                create: (context) => SensorDataModel(),
+                child: MaterialApp(
+                  title: '土壤传感器',
+                  theme: ThemeData(
+                    primarySwatch: Colors.green,
+                    useMaterial3: true,
+                  ),
+                  home: const HomeScreen(),
+                  debugShowCheckedModeBanner: false,
+                ),
+              );
+            }
+          }
+          EOF
+
+          # 创建数据模型
+          cat > lib/models/sensor_data.dart << 'EOF'
+          import 'package:flutter/material.dart';
+
+          class SensorReading {
+            final DateTime timestamp;
+            final double moisture;
+            final double temperature;
+            final double ph;
+            final double conductivity;
+
+            SensorReading({
+              required this.timestamp,
+              required this.moisture,
+              required this.temperature,
+              required this.ph,
+              required this.conductivity,
+            });
+          }
+
+          class SensorDataModel extends ChangeNotifier {
+            List<SensorReading> _readings = [];
+            bool _isConnected = false;
+            String _deviceName = '未连接';
+
+            List<SensorReading> get readings => _readings;
+            bool get isConnected => _isConnected;
+            String get deviceName => _deviceName;
+
+            void addReading({
+              required double moisture,
+              required double temperature,
+              required double ph,
+              required double conductivity,
+            }) {
+              _readings.add(SensorReading(
+                timestamp: DateTime.now(),
+                moisture: moisture,
+                temperature: temperature,
+                ph: ph,
+                conductivity: conductivity,
+              ));
+              if (_readings.length > 100) _readings.removeAt(0);
+              notifyListeners();
+            }
+
+            void connectDevice(String name) {
+              _deviceName = name;
+              _isConnected = true;
+              notifyListeners();
+            }
+
+            void disconnectDevice() {
+              _isConnected = false;
+              _deviceName = '未连接';
+              notifyListeners();
+            }
+
+            void generateMockData() {
+              _readings.clear();
+              for (int i = 0; i < 20; i++) {
+                _readings.add(SensorReading(
+                  timestamp: DateTime.now().subtract(Duration(minutes: i * 5)),
+                  moisture: 40 + (i % 15).toDouble(),
+                  temperature: 20 + (i % 8).toDouble(),
+                  ph: 6.0 + (i % 5) / 10,
+                  conductivity: 1.0 + (i % 6) / 10,
+                ));
+              }
+              notifyListeners();
+            }
+          }
+          EOF
+
+          # 创建主屏幕
+          cat > lib/screens/home_screen.dart << 'EOF'
+          import 'package:flutter/material.dart';
+          import 'package:provider/provider.dart';
+          import 'package:fl_chart/fl_chart.dart';
+          import '../models/sensor_data.dart';
+          import 'data_screen.dart';
+
+          class HomeScreen extends StatefulWidget {
+            const HomeScreen({super.key});
+
+            @override
+            State<HomeScreen> createState() => _HomeScreenState();
+          }
+
+          class _HomeScreenState extends State<HomeScreen> {
+            int _selectedIndex = 0;
+
+            @override
+            void initState() {
+              super.initState();
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                Provider.of<SensorDataModel>(context, listen: false).generateMockData();
+              });
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                appBar: AppBar(
+                  title: const Text('土壤传感器监测'),
+                  backgroundColor: Colors.green,
+                  foregroundColor: Colors.white,
+                  actions: [
+                    IconButton(
+                      icon: const Icon(Icons.refresh),
+                      onPressed: _refreshData,
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.bluetooth),
+                      onPressed: _showDeviceList,
+                    ),
+                  ],
+                ),
+                body: _selectedIndex == 0 ? const DashboardView() : const DataScreen(),
+                bottomNavigationBar: BottomNavigationBar(
+                  currentIndex: _selectedIndex,
+                  onTap: (index) => setState(() => _selectedIndex = index),
+                  selectedItemColor: Colors.green,
+                  items: const [
+                    BottomNavigationBarItem(
+                      icon: Icon(Icons.dashboard),
+                      label: '仪表盘',
+                    ),
+                    BottomNavigationBarItem(
+                      icon: Icon(Icons.bar_chart),
+                      label: '数据',
+                    ),
+                  ],
+                ),
+              );
+            }
+
+            void _refreshData() {
+              final model = Provider.of<SensorDataModel>(context, listen: false);
+              model.addReading(
+                moisture: 35 + (DateTime.now().millisecond % 30).toDouble(),
+                temperature: 20 + (DateTime.now().millisecond % 15).toDouble(),
+                ph: 6.0 + (DateTime.now().millisecond % 8) / 10,
+                conductivity: 1.0 + (DateTime.now().millisecond % 10) / 10,
+              );
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('数据已刷新'), duration: Duration(seconds: 1)),
+              );
+            }
+
+            void _showDeviceList() {
+              showModalBottomSheet(
+                context: context,
+                builder: (context) => Container(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('蓝牙设备', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 10),
+                      ListTile(
+                        leading: const Icon(Icons.bluetooth_connected, color: Colors.green),
+                        title: const Text('ESP32 Sensor'),
+                        onTap: () {
+                          Provider.of<SensorDataModel>(context, listen: false).connectDevice('ESP32 Sensor');
+                          Navigator.pop(context);
+                        },
+                      ),
+                      ListTile(
+                        leading: const Icon(Icons.bluetooth, color: Colors.blue),
+                        title: const Text('Arduino Sensor'),
+                        onTap: () {
+                          Provider.of<SensorDataModel>(context, listen: false).connectDevice('Arduino Sensor');
+                          Navigator.pop(context);
+                        },
+                      ),
+                      ListTile(
+                        leading: const Icon(Icons.bluetooth_disabled, color: Colors.red),
+                        title: const Text('断开连接'),
+                        onTap: () {
+                          Provider.of<SensorDataModel>(context, listen: false).disconnectDevice();
+                          Navigator.pop(context);
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }
+          }
+
+          class DashboardView extends StatelessWidget {
+            const DashboardView({super.key});
+
+            @override
+            Widget build(BuildContext context) {
+              final model = Provider.of<SensorDataModel>(context);
+              final latest = model.readings.isNotEmpty ? model.readings.last : null;
+
+              return SingleChildScrollView(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Card(
+                      elevation: 3,
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Row(
+                          children: [
+                            Icon(
+                              model.isConnected ? Icons.bluetooth_connected : Icons.bluetooth_disabled,
+                              color: model.isConnected ? Colors.green : Colors.red,
+                              size: 32,
+                            ),
+                            const SizedBox(width: 12),
+                            Text(
+                              model.isConnected ? '已连接: ${model.deviceName}' : '未连接设备',
+                              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    if (latest != null) ...[
+                      Row(
+                        children: [
+                          Expanded(
+                            child: SensorCard(
+                              title: '土壤湿度',
+                              value: '${latest.moisture.toStringAsFixed(1)}%',
+                              icon: Icons.water_drop,
+                              color: Colors.blue,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: SensorCard(
+                              title: '温度',
+                              value: '${latest.temperature.toStringAsFixed(1)}°C',
+                              icon: Icons.thermostat,
+                              color: Colors.orange,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: SensorCard(
+                              title: 'pH值',
+                              value: latest.ph.toStringAsFixed(1),
+                              icon: Icons.science,
+                              color: Colors.purple,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: SensorCard(
+                              title: '电导率',
+                              value: '${latest.conductivity.toStringAsFixed(2)} mS/cm',
+                              icon: Icons.flash_on,
+                              color: Colors.green,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                    const SizedBox(height: 20),
+                    const Text(
+                      '土壤湿度趋势',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      height: 200,
+                      child: LineChart(
+                        LineChartData(
+                          gridData: const FlGridData(show: false),
+                          titlesData: const FlTitlesData(show: false),
+                          borderData: FlBorderData(show: false),
+                          lineBarsData: [
+                            LineChartBarData(
+                              spots: model.readings.asMap().entries.map(
+                                (e) => FlSpot(e.key.toDouble(), e.value.moisture)
+                              ).toList(),
+                              isCurved: true,
+                              color: Colors.blue,
+                              barWidth: 2,
+                              belowBarData: BarAreaData(
+                                show: true,
+                                color: Colors.blue.withOpacity(0.1),
+                              ),
+                              dotData: const FlDotData(show: false),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }
+          }
+
+          class SensorCard extends StatelessWidget {
+            final String title;
+            final String value;
+            final IconData icon;
+            final Color color;
+
+            const SensorCard({
+              super.key,
+              required this.title,
+              required this.value,
+              required this.icon,
+              required this.color,
+            });
+
+            @override
+            Widget build(BuildContext context) {
+              return Card(
+                elevation: 2,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(icon, color: color, size: 20),
+                          const SizedBox(width: 8),
+                          Text(
+                            title,
+                            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        value,
+                        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }
+          }
+          EOF
+
+          # 创建数据列表页面
+          cat > lib/screens/data_screen.dart << 'EOF'
+          import 'package:flutter/material.dart';
+          import 'package:provider/provider.dart';
+          import '../models/sensor_data.dart';
+
+          class DataScreen extends StatelessWidget {
+            const DataScreen({super.key});
+
+            @override
+            Widget build(BuildContext context) {
+              final model = Provider.of<SensorDataModel>(context);
+              
+              if (model.readings.isEmpty) {
+                return const Center(child: Text('暂无数据'));
+              }
+              
+              return ListView.builder(
+                padding: const EdgeInsets.all(16),
+                itemCount: model.readings.length,
+                itemBuilder: (context, index) {
+                  final reading = model.readings.reversed.toList()[index];
+                  return Card(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    child: ListTile(
+                      title: Text('时间: ${_formatTime(reading.timestamp)}'),
+                      subtitle: Text(
+                        '湿度: ${reading.moisture.toStringAsFixed(1)}% | '
+                        '温度: ${reading.temperature.toStringAsFixed(1)}°C',
+                      ),
+                      trailing: const Icon(Icons.chevron_right, color: Colors.grey),
+                      onTap: () {
+                        _showDetailDialog(context, reading);
+                      },
+                    ),
+                  );
+                },
+              );
+            }
+
+            String _formatTime(DateTime time) {
+              return '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
+            }
+
+            void _showDetailDialog(BuildContext context, SensorReading reading) {
+              showDialog(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text('详细数据'),
+                  content: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('时间: ${_formatTime(reading.timestamp)}'),
+                      const Divider(),
+                      Text('土壤湿度: ${reading.moisture.toStringAsFixed(1)}%'),
+                      Text('温度: ${reading.temperature.toStringAsFixed(1)}°C'),
+                      Text('pH值: ${reading.ph.toStringAsFixed(1)}'),
+                      Text('电导率: ${reading.conductivity.toStringAsFixed(2)} mS/cm'),
+                    ],
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('关闭'),
+                    ),
+                  ],
+                ),
+              );
+            }
+          }
+          EOF
+
+          # 获取依赖
+          flutter pub get
+
+      - name: Build APK
+        run: flutter build apk --release
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release
+          path: build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 30
